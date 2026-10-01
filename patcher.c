@@ -1,6 +1,7 @@
-/* SuperHexagon 540 Hz patcher
-   Aplica na cópia local do jogo (versão Neo do Steam) a modificação que roda a
-   simulação a 60*N Hz com física idêntica à original. Não distribui arquivos do jogo. */
+/* SuperHexagon 540 Hz patcher v2.0
+   Applies to the local copy of the game (Steam Neo build) the modification that runs the
+   simulation at 60*N Hz with the original rules. Does not distribute any game files.
+   Aplica na cópia local do jogo a modificação que roda a simulação a 60*N Hz. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,53 @@ static uint8_t *make_patched(const uint8_t *orig, int n, size_t *outn){
     *outn=ORIG_SIZE+SEC_SIZE; return o;
 }
 
+/* ---------------- language / idioma ---------------- */
+#define PATCHER_VERSION "2.0"
+enum { EN=0, PT=1 };
+static int lang = EN;
+enum { S_GAME, S_CANTREAD, S_ORIG, S_PATCHED, S_OLDPATCH, S_UNKNOWN, S_BADRATE, S_CLOSE_APPLY, S_CANTREADF,
+       S_UNSUPPORTED, S_CANTBACKUP, S_BACKUP, S_DONE, S_WRITEFAIL, S_CLOSE_RESTORE, S_ALREADY, S_NOBACKUP,
+       S_RESTORED, S_RESTOREFAIL, S_ENTER, S_NOTFOUND, S_MENU, S_RATE, S_COUNT };
+static const char *STR[S_COUNT][2] = {
+ {"Game: %s\n", "Jogo: %s\n"},
+ {"State: could not read the executable.\n", "Estado: não consegui ler o executável.\n"},
+ {"State: original (60 Hz)\n", "Estado: original (60 Hz)\n"},
+ {"State: patched at %d Hz\n", "Estado: modificado a %d Hz\n"},
+ {"State: patched at %d Hz with an older patch (v%d). Apply again to update.\n",
+  "Estado: modificado a %d Hz com uma versão antiga do patch (v%d). Aplique de novo para atualizar.\n"},
+ {"State: unknown version (Steam update or modified by another tool)\n",
+  "Estado: versão desconhecida (atualização do Steam ou modificado por outra ferramenta)\n"},
+ {"The rate must be a multiple of 60 between 120 and 960.\n", "A taxa precisa ser múltiplo de 60 entre 120 e 960.\n"},
+ {"Close the game before applying.\n", "Feche o jogo antes de aplicar.\n"},
+ {"Could not read %s\n", "Não consegui ler %s\n"},
+ {"This SuperHexagon.exe is not the supported version and there is no original backup.\n"
+  "Verify the integrity of the game files in Steam and try again.\n",
+  "Este SuperHexagon.exe não é a versão suportada e não há backup original.\n"
+  "Verifique a integridade dos arquivos no Steam e tente de novo.\n"},
+ {"Could not create the backup %s\n", "Não consegui criar o backup %s\n"},
+ {"Backup created: %s\n", "Backup criado: %s\n"},
+ {"Done: game patched for %d Hz.\n", "Pronto: jogo modificado para %d Hz.\n"},
+ {"Failed to write %s\n", "Falha ao gravar %s\n"},
+ {"Close the game before restoring.\n", "Feche o jogo antes de restaurar.\n"},
+ {"The game is already original.\n", "O jogo já está original.\n"},
+ {"Original backup not found. Use \"Verify integrity of game files\" in Steam.\n",
+  "Backup original não encontrado. Use \"Verificar integridade dos arquivos\" no Steam.\n"},
+ {"Original restored (60 Hz).\n", "Original restaurado (60 Hz).\n"},
+ {"Restore failed.\n", "Falha ao restaurar.\n"},
+ {"\nPress Enter to exit...", "\nPressione Enter para sair..."},
+ {"Could not find SuperHexagon.exe.\nPut this patcher in the game folder or pass the folder as an argument.\n",
+  "Não encontrei o SuperHexagon.exe.\nColoque este patcher na pasta do jogo ou passe a pasta como argumento.\n"},
+ {"\n[1] Apply 540 Hz\n[2] Choose another rate (multiple of 60: 120, 240, 360, 480, 600...)\n[3] Restore original (60 Hz)\n[4] Idioma: Português\n[0] Exit\n> ",
+  "\n[1] Aplicar 540 Hz\n[2] Escolher outra taxa (múltiplo de 60: 120, 240, 360, 480, 600...)\n[3] Restaurar original (60 Hz)\n[4] Language: English\n[0] Sair\n> "},
+ {"Rate in Hz: ", "Taxa em Hz: "},
+};
+#define T(id) STR[id][lang]
+
+static void detect_lang(void){
+    LANGID id = GetUserDefaultUILanguage();
+    lang = (PRIMARYLANGID(id) == LANG_PORTUGUESE) ? PT : EN;
+}
+
 static char exe_path[MAX_PATH], bak_path[MAX_PATH+8];
 
 static int game_running(void){
@@ -103,66 +151,64 @@ static uint8_t *get_original(const uint8_t *cur, size_t curn){
 
 static void status(void){
     size_t n; uint8_t *b=read_file(exe_path,&n);
-    printf("Jogo: %s\n",exe_path);
-    if(!b){ printf("Estado: não consegui ler o executável.\n"); return; }
+    printf(T(S_GAME),exe_path);
+    if(!b){ printf("%s",T(S_CANTREAD)); return; }
     int pn=patched_n(b,n);
-    if(is_original(b,n)) printf("Estado: original (60 Hz)\n");
-    else if(pn && patched_version(b)==PATCH_VERSION) printf("Estado: modificado a %d Hz\n",pn*60);
-    else if(pn) printf("Estado: modificado a %d Hz com uma versão antiga do patch (v%d). Aplique de novo para atualizar.\n",pn*60,patched_version(b));
-    else printf("Estado: versão desconhecida (atualização do Steam ou modificado por outra ferramenta)\n");
+    if(is_original(b,n)) printf("%s",T(S_ORIG));
+    else if(pn && patched_version(b)==PATCH_VERSION) printf(T(S_PATCHED),pn*60);
+    else if(pn) printf(T(S_OLDPATCH),pn*60,patched_version(b));
+    else printf("%s",T(S_UNKNOWN));
     free(b);
 }
 
 static int do_patch(int hz){
-    if(hz%60 || hz<120 || hz>960){ printf("A taxa precisa ser múltiplo de 60 entre 120 e 960.\n"); return 1; }
-    if(game_running()){ printf("Feche o jogo antes de aplicar.\n"); return 1; }
+    if(hz%60 || hz<120 || hz>960){ printf("%s",T(S_BADRATE)); return 1; }
+    if(game_running()){ printf("%s",T(S_CLOSE_APPLY)); return 1; }
     size_t n; uint8_t *cur=read_file(exe_path,&n);
-    if(!cur){ printf("Não consegui ler %s\n",exe_path); return 1; }
+    if(!cur){ printf(T(S_CANTREADF),exe_path); return 1; }
     uint8_t *orig=get_original(cur,n);
-    if(!orig){
-        printf("Este SuperHexagon.exe não é a versão suportada e não há backup original.\n"
-               "Verifique a integridade dos arquivos no Steam e tente de novo.\n");
-        free(cur); return 1;
-    }
+    if(!orig){ printf("%s",T(S_UNSUPPORTED)); free(cur); return 1; }
     /* backup: keep a valid original .bak */
     size_t bn; uint8_t *bb=read_file(bak_path,&bn);
     if(!(bb && is_original(bb,bn))){
-        if(!write_file(bak_path,orig,ORIG_SIZE)){ printf("Não consegui criar o backup %s\n",bak_path); free(bb);free(cur);free(orig); return 1; }
-        printf("Backup criado: %s\n",bak_path);
+        if(!write_file(bak_path,orig,ORIG_SIZE)){ printf(T(S_CANTBACKUP),bak_path); free(bb);free(cur);free(orig); return 1; }
+        printf(T(S_BACKUP),bak_path);
     }
     free(bb);
     size_t pn; uint8_t *p=make_patched(orig,hz/60,&pn);
     int ok=write_file(exe_path,p,pn);
-    if(ok) printf("Pronto: jogo modificado para %d Hz.\n",hz);
-    else printf("Falha ao gravar %s\n",exe_path);
+    if(ok) printf(T(S_DONE),hz);
+    else printf(T(S_WRITEFAIL),exe_path);
     free(p); free(cur); free(orig); return ok?0:1;
 }
 
 static int do_restore(void){
-    if(game_running()){ printf("Feche o jogo antes de restaurar.\n"); return 1; }
+    if(game_running()){ printf("%s",T(S_CLOSE_RESTORE)); return 1; }
     size_t n; uint8_t *cur=read_file(exe_path,&n);
-    if(cur && is_original(cur,n)){ printf("O jogo já está original.\n"); free(cur); return 0; }
+    if(cur && is_original(cur,n)){ printf("%s",T(S_ALREADY)); free(cur); return 0; }
     free(cur);
     uint8_t *b=read_file(bak_path,&n);
-    if(!(b && is_original(b,n))){ printf("Backup original não encontrado. Use \"Verificar integridade dos arquivos\" no Steam.\n"); free(b); return 1; }
+    if(!(b && is_original(b,n))){ printf("%s",T(S_NOBACKUP)); free(b); return 1; }
     int ok=write_file(exe_path,b,n); free(b);
-    printf(ok?"Original restaurado (60 Hz).\n":"Falha ao restaurar.\n"); return ok?0:1;
+    printf("%s",ok?T(S_RESTORED):T(S_RESTOREFAIL)); return ok?0:1;
 }
 
-static void pause_exit(void){ printf("\nPressione Enter para sair..."); fflush(stdout); getchar(); }
+static void pause_exit(void){ printf("%s",T(S_ENTER)); fflush(stdout); getchar(); }
 
 int main(int argc, char **argv){
     SetConsoleOutputCP(65001);
+    detect_lang();
     const char *path=NULL; int hz=0, restore=0, stat=0;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--hz") && i+1<argc) hz=atoi(argv[++i]);
         else if(!strcmp(argv[i],"--restore")) restore=1;
         else if(!strcmp(argv[i],"--status")) stat=1;
+        else if(!strcmp(argv[i],"--lang") && i+1<argc){ i++; lang = (!_stricmp(argv[i],"pt")||!_stricmp(argv[i],"pt-br")) ? PT : EN; }
         else path=argv[i];
     }
-    printf("SuperHexagon 540 Hz patcher (patch v%d)\n\n",PATCH_VERSION);
+    printf("SuperHexagon 540 Hz patcher v%s (patch v%d)\n\n",PATCHER_VERSION,PATCH_VERSION);
     if(!find_exe(path)){
-        printf("Não encontrei o SuperHexagon.exe.\nColoque este patcher na pasta do jogo ou passe a pasta como argumento.\n");
+        printf("%s",T(S_NOTFOUND));
         if(argc<2) pause_exit(); return 1;
     }
     if(stat){ status(); return 0; }
@@ -170,13 +216,14 @@ int main(int argc, char **argv){
     if(hz) return do_patch(hz);
     for(;;){
         status();
-        printf("\n[1] Aplicar 540 Hz\n[2] Escolher outra taxa (múltiplo de 60: 120, 240, 360, 480, 600...)\n[3] Restaurar original (60 Hz)\n[0] Sair\n> ");
+        printf("%s",T(S_MENU));
         fflush(stdout);
         char line[64]; if(!fgets(line,sizeof line,stdin)) return 0;
         int c=atoi(line);
         if(c==1) do_patch(540);
-        else if(c==2){ printf("Taxa em Hz: "); fflush(stdout); if(fgets(line,sizeof line,stdin)) do_patch(atoi(line)); }
+        else if(c==2){ printf("%s",T(S_RATE)); fflush(stdout); if(fgets(line,sizeof line,stdin)) do_patch(atoi(line)); }
         else if(c==3) do_restore();
+        else if(c==4) lang = !lang;
         else if(c==0 || line[0]=='\n') return 0;
         printf("\n");
     }

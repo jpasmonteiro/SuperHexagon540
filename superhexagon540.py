@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Super Hexagon 540 Hz patcher (Python version, patch v25).
+"""Super Hexagon 540 Hz patcher v2.0 (Python version, patch v25).
 
 Same behaviour as SuperHexagon540Patcher.exe, for people who prefer to read and run a script:
   python superhexagon540.py            interactive menu
   python superhexagon540.py --hz 540   apply at 540 Hz (any multiple of 60, 120..960)
   python superhexagon540.py --restore  restore the original from SuperHexagon.exe.bak
   python superhexagon540.py --status   show the current state
+  python superhexagon540.py --lang pt  language: en or pt (default: system language)
 Pass the game folder as an argument if the script is not inside it.
 No network access, no admin rights. Only SuperHexagon.exe and SuperHexagon.exe.bak are touched.
 """
@@ -150,6 +151,44 @@ def make_patched(orig, n):
     sec[OFF_TABLE:OFF_TABLE + n] = bytes(table_for(n))
     return bytes(out + sec)
 
+def detect_lang():
+    try:
+        import ctypes
+        if (ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3ff) == 0x16: return "pt"
+        return "en"
+    except Exception:
+        pass
+    import locale
+    for v in (os.environ.get("LC_ALL"), os.environ.get("LANG"), (locale.getlocale()[0] or "")):
+        if v: return "pt" if v.lower().startswith("pt") else "en"
+    return "en"
+
+LANG = detect_lang()
+MSG = {
+    "game": ("Game:", "Jogo:"),
+    "state": ("State:", "Estado:"),
+    "orig": ("original (60 Hz)", "original (60 Hz)"),
+    "patched": ("patched at %d Hz", "modificado a %d Hz"),
+    "old": ("patched at %d Hz with an older patch (v%d), apply again to update",
+            "modificado a %d Hz com uma versão antiga do patch (v%d), aplique de novo para atualizar"),
+    "unknown": ("unknown version (Steam update or modified by another tool)",
+                "versão desconhecida (atualização do Steam ou modificado por outra ferramenta)"),
+    "badrate": ("Rate must be a multiple of 60 between 120 and 960.", "A taxa precisa ser múltiplo de 60 entre 120 e 960."),
+    "unsupported": ("Unsupported SuperHexagon.exe and no original backup. Verify the game files in Steam.",
+                    "Este SuperHexagon.exe não é a versão suportada e não há backup original. Verifique os arquivos no Steam."),
+    "backup": ("Backup created:", "Backup criado:"),
+    "done": ("Done: game patched for %d Hz.", "Pronto: jogo modificado para %d Hz."),
+    "already": ("Already original.", "O jogo já está original."),
+    "nobackup": ("No original backup. Verify the game files in Steam.", "Backup original não encontrado. Verifique os arquivos no Steam."),
+    "restored": ("Original restored (60 Hz).", "Original restaurado (60 Hz)."),
+    "notfound": ("SuperHexagon.exe not found. Put this script in the game folder or pass the folder.",
+                 "SuperHexagon.exe não encontrado. Coloque este script na pasta do jogo ou passe a pasta como argumento."),
+    "menu": ("[1] Apply 540 Hz  [2] Other rate  [3] Restore original  [4] Idioma: Português  [0] Exit\n> ",
+             "[1] Aplicar 540 Hz  [2] Outra taxa  [3] Restaurar original  [4] Language: English  [0] Sair\n> "),
+    "rate": ("Rate in Hz: ", "Taxa em Hz: "),
+}
+def t(k): return MSG[k][1 if LANG == "pt" else 0]
+
 def paths(arg):
     d = arg or os.path.dirname(os.path.abspath(__file__))
     exe = d if d.lower().endswith(".exe") else os.path.join(d, "SuperHexagon.exe")
@@ -160,47 +199,57 @@ def read(p):
 
 def status(exe):
     b = read(exe); info = patched_info(b)
-    if is_original(b): return "original (60 Hz)"
-    if info and info[1] == PATCH_VERSION: return "patched at %d Hz" % (info[0] * 60)
-    if info: return "patched at %d Hz with an older patch (v%d), apply again to update" % (info[0] * 60, info[1])
-    return "unknown version (Steam update or modified by another tool)"
+    if is_original(b): return t("orig")
+    if info and info[1] == PATCH_VERSION: return t("patched") % (info[0] * 60)
+    if info: return t("old") % (info[0] * 60, info[1])
+    return t("unknown")
 
 def apply(exe, bak, hz):
-    if hz % 60 or not 120 <= hz <= 960: sys.exit("Rate must be a multiple of 60 between 120 and 960.")
+    if hz % 60 or not 120 <= hz <= 960: print(t("badrate")); return
     cur = read(exe)
     if is_original(cur): orig = cur
     elif os.path.exists(bak) and is_original(read(bak)): orig = read(bak)
-    else: sys.exit("Unsupported SuperHexagon.exe and no original backup. Verify the game files in Steam.")
+    else: print(t("unsupported")); return
     if not (os.path.exists(bak) and is_original(read(bak))):
         with open(bak, "wb") as f: f.write(orig)
-        print("Backup created:", bak)
+        print(t("backup"), bak)
     data = make_patched(orig, hz // 60)
     with open(exe, "wb") as f: f.write(data)
-    print("Done: game patched for %d Hz." % hz)
+    print(t("done") % hz)
 
 def restore(exe, bak):
-    if is_original(read(exe)): print("Already original."); return
-    if not (os.path.exists(bak) and is_original(read(bak))): sys.exit("No original backup. Verify the game files in Steam.")
-    shutil.copyfile(bak, exe); print("Original restored (60 Hz).")
+    if is_original(read(exe)): print(t("already")); return
+    if not (os.path.exists(bak) and is_original(read(bak))): print(t("nobackup")); return
+    shutil.copyfile(bak, exe); print(t("restored"))
 
 def main():
+    global LANG
     args = sys.argv[1:]; hz = None; mode = None; folder = None
     while args:
         a = args.pop(0)
         if a == "--hz": hz = int(args.pop(0))
         elif a == "--restore": mode = "restore"
         elif a == "--status": mode = "status"
+        elif a == "--lang": LANG = "pt" if args.pop(0).lower().startswith("pt") else "en"
         else: folder = a
+    print("SuperHexagon 540 Hz patcher v2.0 (Python, patch v%d)\n" % PATCH_VERSION)
     exe, bak = paths(folder)
-    if not os.path.exists(exe): sys.exit("SuperHexagon.exe not found. Put this script in the game folder or pass the folder.")
-    print("Game:", exe); print("State:", status(exe))
-    if mode == "status": return
+    if not os.path.exists(exe): sys.exit(t("notfound"))
+    if mode == "status": print(t("game"), exe); print(t("state"), status(exe)); return
     if mode == "restore": return restore(exe, bak)
     if hz: return apply(exe, bak, hz)
-    c = input("[1] Apply 540 Hz  [2] Other rate  [3] Restore original  [0] Exit\n> ").strip()
-    if c == "1": apply(exe, bak, 540)
-    elif c == "2": apply(exe, bak, int(input("Rate in Hz: ")))
-    elif c == "3": restore(exe, bak)
+    while True:
+        print(t("game"), exe); print(t("state"), status(exe))
+        try: c = input(t("menu")).strip()
+        except EOFError: return
+        if c == "1": apply(exe, bak, 540)
+        elif c == "2":
+            try: apply(exe, bak, int(input(t("rate"))))
+            except ValueError: print(t("badrate"))
+        elif c == "3": restore(exe, bak)
+        elif c == "4": LANG = "en" if LANG == "pt" else "pt"
+        else: return
+        print()
 
 if __name__ == "__main__":
     main()

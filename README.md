@@ -16,7 +16,10 @@ Na página de [Releases](../../releases) há duas opções que fazem exatamente 
 
 Coloque o arquivo na pasta do jogo (Steam: botão direito no Super Hexagon, Gerenciar, Procurar arquivos locais),
 feche o jogo e rode. Opção 1 aplica 540 Hz, opção 2 escolhe outra taxa, opção 3 restaura o original.
-Linha de comando: `--hz 240`, `--restore`, `--status`.
+Linha de comando: `--hz 240`, `--restore`, `--status`, `--lang en` ou `--lang pt`.
+
+O patcher abre no idioma do Windows (português ou inglês) e a opção 4 do menu troca o idioma.
+The patcher starts in the Windows language (English or Portuguese); menu option 4 switches language.
 
 ## O que o patcher faz
 
@@ -45,8 +48,8 @@ de Python 3 e do GNU as/ld (binutils): `python3 genpatch.py`.
 
 ## Verificação
 
-SHA-256 do `SuperHexagon540Patcher.exe` da versão 1.1:
-`6400736a1214733326fa84a7b560bdd097963f0e8e028c778d3d296c62c34641`
+SHA-256 do `SuperHexagon540Patcher.exe` da versão 2.0:
+`b4af7391fa3e7bb1db7a219d5448bb8e154ca5e14bd18285094b9af26bea1af6`
 
 A compilação é reproduzível: com o MinGW-w64 (GCC 13, binutils 2.42) os comandos acima geram o mesmo hash.
 
