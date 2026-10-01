@@ -19,7 +19,10 @@ ORIG_SHA = "72b0c26053c37edd3435def461e9027cd6ffad12032db2fd0b32c256fdbee6b9"
 BASE = 0x400000
 SEC_RVA = 0x16b000
 S = BASE + SEC_RVA
-SEC_SIZE = 0x4000
+DATA_SIZE = 0x3000
+CODE_RVA = SEC_RVA + DATA_SIZE
+CODE_SIZE = 0x2000
+SEC_SIZE = DATA_SIZE + CODE_SIZE
 
 # data layout
 D = dict(magic=0x00, N=0x08, idx=0x0c, tick=0x10, force=0x14, cur_delta=0x18, force_delta=0x20,
@@ -27,10 +30,10 @@ D = dict(magic=0x00, N=0x08, idx=0x0c, tick=0x10, force=0x14, cur_delta=0x18, fo
          m_wall=0x48, c_1_64=0x50, c_neg1=0x58, table=0x60, version=0x70, steps=0x74, ticks=0x78,
          xs=0x80, last_timer=0x7c, m_int=0xc0, M_acc=0xc8, M_prev=0xd0, m_len=0xd8, ev_flag=0xe0, first=0xe4, cur_delta_f=0xe8, spin_active=0xec, spin_rate=0xf0, c_half=0xf8, rateA=0x100, rateB=0x108, c_20=0x110, c_24=0x118, c_60=0x120, c_2=0x128, c_32=0x130, c_64=0x138, c_400=0x140, ang_step=0x148, ang_tick=0x14c, ang_free=0x150, softblk=0x154, c_145=0x158, snap_n=0x160, swapped=0x164)
 A = {k: S + v for k, v in D.items()}
-SNAP = S + 0x2000
+SNAP = S + 0x200
 SNAP_MAX = 400
-CODE = S + 0x200
-VERSION = 24
+CODE = BASE + CODE_RVA
+VERSION = 25
 
 
 def table_for(n):
@@ -1274,7 +1277,8 @@ def build(orig: bytes, n: int) -> bytes:
     assert hashlib.sha256(orig).hexdigest() == ORIG_SHA, "unsupported executable"
     assert 1 <= n <= 16
     code, L = assemble()
-    assert len(code) <= SEC_SIZE - 0x200, len(code)
+    assert len(code) <= CODE_SIZE, len(code)
+    assert SNAP + 20 * SNAP_MAX <= S + DATA_SIZE
     buf = bytearray(orig)
     # --- PE: add section, fixed base ---
     pe = struct.unpack_from('<I', buf, 0x3c)[0]
@@ -1283,12 +1287,15 @@ def build(orig: bytes, n: int) -> bytes:
     sizeopt = struct.unpack_from('<H', buf, pe + 20)[0]
     sec_tab = opt + sizeopt
     new_hdr = sec_tab + 40 * nsec
-    assert new_hdr + 40 <= 0x400 and buf[new_hdr:new_hdr + 40] == b'\x00' * 40
+    assert new_hdr + 80 <= 0x400 and buf[new_hdr:new_hdr + 80] == b'\x00' * 80
     raw_ptr = len(buf)
     assert raw_ptr % 0x200 == 0
-    hdr = struct.pack('<8sIIIIIIHHI', b'.sh540\x00\x00', SEC_SIZE, SEC_RVA, SEC_SIZE, raw_ptr, 0, 0, 0, 0, 0xE0000060)
-    buf[new_hdr:new_hdr + 40] = hdr
-    struct.pack_into('<H', buf, pe + 6, nsec + 1)
+    # data (read/write) and code (read/execute) in separate sections, no RWX
+    hdr_d = struct.pack('<8sIIIIIIHHI', b'.sh540d\x00', DATA_SIZE, SEC_RVA, DATA_SIZE, raw_ptr, 0, 0, 0, 0, 0xC0000040)
+    hdr_c = struct.pack('<8sIIIIIIHHI', b'.sh540c\x00', CODE_SIZE, CODE_RVA, CODE_SIZE, raw_ptr + DATA_SIZE, 0, 0, 0, 0, 0x60000020)
+    buf[new_hdr:new_hdr + 40] = hdr_d
+    buf[new_hdr + 40:new_hdr + 80] = hdr_c
+    struct.pack_into('<H', buf, pe + 6, nsec + 2)
     struct.pack_into('<I', buf, opt + 56, SEC_RVA + SEC_SIZE)          # SizeOfImage
     dllch = struct.unpack_from('<H', buf, opt + 70)[0]
     struct.pack_into('<H', buf, opt + 70, dllch & ~0x0040)               # no ASLR: fixed 0x400000
@@ -1307,7 +1314,7 @@ def build(orig: bytes, n: int) -> bytes:
     struct.pack_into('<i', sec, D['version'], VERSION)
     for i, v in enumerate(table_for(n)):
         sec[D['table'] + i] = v
-    sec[0x200:0x200 + len(code)] = code
+    sec[DATA_SIZE:DATA_SIZE + len(code)] = code
     buf += sec
     # --- patch sites ---
     for va, old, new in patch_sites(L):
